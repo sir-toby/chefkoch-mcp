@@ -1,0 +1,20 @@
+name: Tests
+
+on:
+  push:
+    # main runs them through docker-publish.yaml, ahead of the build.
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[dev]'
+      # Offline: the tests mock Chefkoch and GitHub, so they never need the account.
+      - run: pytest -q

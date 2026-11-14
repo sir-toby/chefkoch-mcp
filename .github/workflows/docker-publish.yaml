@@ -1,0 +1,45 @@
+# Publishes the image to Docker Hub. It does NOT deploy: Komodo polls the
+# `latest` digest and redeploys the stack in the self-host repo.
+#
+# Tags pushed per build:
+#   :latest        what Komodo follows - always the head of main
+#   :<git sha>     immutable, for "which build is running" and rolling back by hand
+name: Build and Push Docker image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yaml
+
+  build:
+    needs: test
+    # main only, even when dispatched by hand: every build moves `latest`,
+    # which Komodo deploys to the NAS.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: |
+            sirtoby42/chefkoch-mcp:latest
+            sirtoby42/chefkoch-mcp:${{ github.sha }}
+          push: true
+          # The NAS is x86_64.
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
