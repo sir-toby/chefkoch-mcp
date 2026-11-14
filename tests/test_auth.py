@@ -35,6 +35,7 @@ def test_provider_wraps_its_validator(tmp_path, monkeypatch):
         client_secret="secret",
         base_url="https://example.org",
         jwt_signing_key="k" * 32,
+        required_scopes=["read:user"],
     )
     assert isinstance(provider._token_validator, AllowlistVerifier)
-    assert provider._token_validator.required_scopes == ["user"]
+    assert provider._token_validator.required_scopes == ["read:user"]

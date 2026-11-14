@@ -61,6 +61,8 @@ def _auth():
         client_id=_env("GITHUB_CLIENT_ID"),
         client_secret=_env("GITHUB_CLIENT_SECRET"),
         base_url=_env("PUBLIC_BASE_URL"),
+        # Read-only profile access is enough to learn the login; the default "user" can write.
+        required_scopes=["read:user"],
         # Stable across restarts, so claude.ai's registration and tokens survive a redeploy.
         jwt_signing_key=_env("JWT_SIGNING_KEY"),
         allowed_logins={u.strip() for u in _env("ALLOWED_GITHUB_USERS").split(",") if u.strip()},
