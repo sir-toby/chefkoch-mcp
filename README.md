@@ -1,8 +1,9 @@
 # chefkoch-mcp
 
-Remote MCP server that gives Claude read access to one Chefkoch.de cookbook:
-collections, saved Chefkoch recipes and private (own or imported) recipes. Added
-to claude.ai as a custom connector, it works on web and mobile.
+Remote MCP server that gives Claude access to one Chefkoch.de cookbook: it reads
+collections, saved Chefkoch recipes and private (own or imported) recipes, and it
+creates and edits private recipes and collections. Added to claude.ai as a custom
+connector, it works on web and mobile.
 
 Chefkoch has no official API. This uses the website's own, undocumented one
 ([docs/api.md](docs/api.md)) and logs in with the account's email and password.
@@ -11,14 +12,28 @@ only read public recipes without a login, which is why this exists.
 
 ## Tools
 
-All read-only.
-
 | Tool | What it does |
 |---|---|
 | `list_collections` | All collections with recipe counts |
 | `list_recipes` | Recipes of one collection, or all saved recipes |
 | `search_my_recipes` | Search the cookbook (Chefkoch's own cookbook search) |
 | `get_recipe` | Full recipe, ingredients optionally scaled to other servings |
+| `create_recipe` | New private recipe, optionally filed into collections |
+| `update_recipe` | Change a private recipe; only the given fields change |
+| `create_collection` | New private collection |
+| `set_recipe_collections` | Add a recipe to collections or take it out of them |
+
+Writing follows what the website's recipe editor does ([docs/api.md](docs/api.md#writing)):
+ingredients are plain text lines that Chefkoch's own parser turns into its database
+entries, and a change sends the whole recipe back. Public Chefkoch recipes cannot be
+edited, only private ones (id `user-…`). Deleting and photos are not offered.
+
+`update_recipe` refuses rather than guesses when a change could lose data, and
+sends nothing in that case: an empty ingredient or step list, a line the parser does
+not understand, ingredient lines of which none matches the stored recipe (typically
+copied from `get_recipe` with scaled servings), or a recipe that still has its
+ingredients or steps only as free text. New steps go into one section, so section
+headers of imported recipes are lost when the steps are changed.
 
 ## Architecture
 
