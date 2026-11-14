@@ -1,7 +1,7 @@
 [project]
 name = "chefkoch-mcp"
-version = "0.1.0"
-description = "Read-only MCP server for one Chefkoch.de cookbook: collections, saved and private recipes"
+version = "0.2.0"
+description = "MCP server for one Chefkoch.de cookbook: read recipes and collections, edit private recipes"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=4.2,<5",

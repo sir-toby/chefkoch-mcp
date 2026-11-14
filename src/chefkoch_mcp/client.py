@@ -91,13 +91,15 @@ class ChefkochClient:
             if self._token is None or self._token == stale_token:
                 await self.login()
 
-    async def get(self, path: str, **params: Any) -> Any:
-        """GET an api.chefkoch.de path as the logged-in user, re-logging in once on 401."""
+    async def _request(self, method: str, path: str, *, json: Any = None, **params: Any) -> Any:
+        """Call an api.chefkoch.de path as the logged-in user, re-logging in once on 401."""
         await self._ensure_login()
         for attempt in (1, 2):
             token = self._token
-            response = await self._http.get(
+            response = await self._http.request(
+                method,
                 f"{API}{path}",
+                json=json,
                 params={k: v for k, v in params.items() if v is not None},
                 headers={"X-Chefkoch-Api-Token": token or ""},
             )
@@ -107,10 +109,20 @@ class ChefkochClient:
                 continue
             if response.status_code == 404:
                 raise ChefkochError("Nicht gefunden - stimmt die id?")
-            if response.status_code != 200:
-                raise ChefkochError(f"Chefkoch-API antwortet mit HTTP {response.status_code} für {path}")
-            return response.json()
+            data = _json(response)
+            # Writes answer {"notification": {"hasErrors": …, "messages": [{"identifier": …}]}}.
+            notification = data.get("notification") if isinstance(data, dict) else None
+            if response.status_code not in (200, 201) or (notification or {}).get("hasErrors"):
+                reason = _error_identifier(notification)
+                raise ChefkochError(
+                    f"Chefkoch-API antwortet mit HTTP {response.status_code} für {method} {path}"
+                    + (f" ({reason})" if reason else "")
+                )
+            return data
         raise ChefkochError("Chefkoch lehnt auch den frischen Login ab.")
+
+    async def get(self, path: str, **params: Any) -> Any:
+        return await self._request("GET", path, **params)
 
     # --- cookbook ---------------------------------------------------------
 
@@ -147,5 +159,64 @@ class ChefkochClient:
         return await self.get(f"/recipes/{recipe_id}")
 
 
+    # --- writing ----------------------------------------------------------
+    # Request bodies as the website's editor sends them, see docs/api.md.
+
+    async def parse_ingredient(self, line: str) -> list[dict]:
+        """Chefkoch's own parser: "200 g Mehl, gesiebt" -> amount, unit and food with their ids.
+        Usually one result; unknown foods come back with food id None."""
+        data = await self._request("POST", "/cookbooks/ingredients/parse", json={"query": line})
+        return data["results"]
+
+    async def create_private_recipe(self, body: dict) -> str:
+        await self._ensure_login()
+        data = await self._request("POST", f"/cookbooks/{self.cookbook_id}/private-recipes", json=body)
+        return _first_message(data)["recipe"]["id"]
+
+    async def update_private_recipe(self, recipe_id: str, body: dict) -> None:
+        """Replaces the whole recipe; send every field, not only the changed ones."""
+        await self._ensure_login()
+        await self._request("PUT", f"/cookbooks/{self.cookbook_id}/private-recipes/{recipe_id}", json=body)
+
+    async def create_collection(self, name: str, description: str = "") -> dict:
+        await self._ensure_login()
+        body = {"name": name, "descriptionText": description} if description else {"name": name}
+        data = await self._request("POST", f"/cookbooks/{self.cookbook_id}/collections", json=body)
+        return _first_message(data)["collection"]
+
+    async def recipe_collection_ids(self, recipe_id: str) -> list[str]:
+        await self._ensure_login()
+        data = await self.get(f"/cookbooks/{self.cookbook_id}/recipes/{recipe_id}/collections")
+        return data["collectionIds"]
+
+    async def set_recipe_collections(self, recipe_id: str, collection_ids: list[str]) -> None:
+        """`collection_ids` is the complete set: the recipe leaves every collection not in it."""
+        await self._ensure_login()
+        await self._request(
+            "PATCH",
+            f"/cookbooks/{self.cookbook_id}/saved-recipes",
+            json={"recipeIds": [recipe_id], "collectionIds": collection_ids},
+        )
+
+
 def is_private(recipe_id: str) -> bool:
     return recipe_id.startswith("user-")
+
+
+def _json(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _error_identifier(notification: dict | None) -> str:
+    messages = (notification or {}).get("messages") or []
+    return ", ".join(m["identifier"] for m in messages if isinstance(m, dict) and m.get("identifier"))
+
+
+def _first_message(data: dict) -> dict:
+    try:
+        return data["notification"]["messages"][0]
+    except (KeyError, IndexError, TypeError) as e:
+        raise ChefkochError("Chefkoch-Antwort ohne Bestätigung - hat sich die API geändert?") from e

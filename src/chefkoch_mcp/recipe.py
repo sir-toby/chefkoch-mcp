@@ -91,19 +91,23 @@ def _scaled(value: Any, factor: float) -> float | None:
 def _private_ingredients(data: dict, factor: float) -> list[IngredientGroup]:
     groups = []
     for group in sorted(data.get("recipeIngredientGroups") or [], key=lambda g: g.get("position", 0)):
-        items = []
-        for i in sorted(group.get("ingredients") or [], key=lambda i: i.get("position", 0)):
-            amount = _scaled(i.get("amount"), factor)  # before choosing singular or plural
-            items.append(
-                Ingredient(
-                    amount=amount,
-                    unit=_plural(i.get("unit"), amount),
-                    name=_plural(i.get("food"), amount) or _clean(i.get("originalInput")),
-                    note=", ".join(i.get("properties") or []),
-                )
-            )
+        items = [private_ingredient(i, factor) for i in sorted_ingredients(group)]
         groups.append(IngredientGroup(header=_clean(group.get("header")), ingredients=items))
     return groups
+
+
+def sorted_ingredients(group: dict) -> list[dict]:
+    return sorted(group.get("ingredients") or [], key=lambda i: i.get("position", 0))
+
+
+def private_ingredient(i: dict, factor: float = 1.0) -> Ingredient:
+    amount = _scaled(i.get("amount"), factor)  # before choosing singular or plural
+    return Ingredient(
+        amount=amount,
+        unit=_plural(i.get("unit"), amount),
+        name=_plural(i.get("food"), amount) or _clean(i.get("originalInput")),
+        note=", ".join(i.get("properties") or []),
+    )
 
 
 def _public_ingredients(data: dict, factor: float) -> list[IngredientGroup]:
@@ -175,6 +179,12 @@ def format_amount(amount: float | None) -> str:
     return text.replace(".", ",")
 
 
+def ingredient_text(i: Ingredient) -> str:
+    """One ingredient as get_recipe shows it, e.g. "200 g Mehl, gesiebt"."""
+    text = " ".join(p for p in (format_amount(i.amount), i.unit, i.name) if p)
+    return f"{text}, {i.note}" if i.note else text
+
+
 def to_markdown(recipe: Recipe) -> str:
     lines = [f"# {recipe.title}", ""]
     meta = []
@@ -191,10 +201,7 @@ def to_markdown(recipe: Recipe) -> str:
     for group in recipe.ingredient_groups:
         if group.header:
             lines += [f"**{group.header}**", ""]
-        for i in group.ingredients:
-            parts = [format_amount(i.amount), i.unit, i.name]
-            text = " ".join(p for p in parts if p)
-            lines.append(f"- {text}, {i.note}" if i.note else f"- {text}")
+        lines += [f"- {ingredient_text(i)}" for i in group.ingredients]
         lines.append("")
     if recipe.ingredients_text:
         lines += [recipe.ingredients_text, ""]

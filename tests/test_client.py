@@ -74,3 +74,23 @@ async def test_pages_through_everything(router):
 
     assert len(await ChefkochClient("a@b.de", "pw").recipes()) == 150
     assert route.calls[1].request.url.params["offset"] == "100"
+
+
+async def test_write_error_names_chefkoch_identifier(router):
+    mock_login(router, ["tok"])
+    router.put(f"{API}/cookbooks/user-{UID}/private-recipes/user-abc").respond(
+        500, json={"notification": {"hasErrors": True, "messages": [{"type": "error", "identifier": "type_error"}]}}
+    )
+
+    with pytest.raises(ChefkochError, match="type_error"):
+        await ChefkochClient("a@b.de", "pw").update_private_recipe("user-abc", {})
+
+
+async def test_create_returns_new_id(router):
+    mock_login(router, ["tok"])
+    route = router.post(f"{API}/cookbooks/user-{UID}/private-recipes").respond(
+        201, json={"notification": {"hasErrors": False, "messages": [{"recipe": {"id": "user-new"}}]}}
+    )
+
+    assert await ChefkochClient("a@b.de", "pw").create_private_recipe({"title": "x"}) == "user-new"
+    assert route.calls.last.request.content == b'{"title":"x"}'

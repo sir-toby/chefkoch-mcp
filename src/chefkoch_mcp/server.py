@@ -1,4 +1,4 @@
-"""MCP server: read-only access to one Chefkoch cookbook."""
+"""MCP server for one Chefkoch cookbook: reading, plus own recipes and collections."""
 
 from __future__ import annotations
 
@@ -13,18 +13,29 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from . import edit
 from . import recipe as rc
-from .client import ChefkochClient, ChefkochError
+from .client import ChefkochClient, ChefkochError, is_private
 
 log = logging.getLogger(__name__)
 
 READ_ONLY = {"readOnlyHint": True, "openWorldHint": True}
+WRITE = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}
+# Overwrites what is there; the previous version is not kept.
+OVERWRITE = WRITE | {"destructiveHint": True}
 
 INSTRUCTIONS = """\
 Zugriff auf das private Chefkoch-Kochbuch des Haushalts: Sammlungen, gespeicherte
-Chefkoch-Rezepte und eigene bzw. importierte (private) Rezepte. Nur lesend.
+Chefkoch-Rezepte und eigene bzw. importierte (private) Rezepte.
 Für ein konkretes Rezept erst suchen oder eine Sammlung auflisten, dann get_recipe
 mit der id aufrufen. get_recipe rechnet Zutaten auf Wunsch auf andere Portionen um.
+
+Schreiben: create_recipe legt ein eigenes Rezept an, update_recipe ändert eines
+(nur private Rezepte, id beginnt mit user-; Chefkoch-Rezepte anderer nicht).
+create_collection und set_recipe_collections ordnen Rezepte in Sammlungen.
+Vor update_recipe das Rezept mit get_recipe ohne servings laden. Zutaten als Text,
+eine pro Eintrag; unveränderte Zutaten genau so übernehmen, wie get_recipe sie zeigt.
+Nur ändern, worum gebeten wurde. Eine alte Fassung wird nicht aufbewahrt.
 """
 
 
@@ -41,6 +52,21 @@ class Collections(BaseModel):
 class RecipeList(BaseModel):
     count: int
     recipes: list[rc.RecipeSummary]
+
+
+class CollectionMembership(BaseModel):
+    recipe_id: str
+    collections: list[Collection]
+
+
+IngredientGroups = Annotated[
+    list[edit.IngredientGroupInput],
+    Field(description="Zutaten in Gruppen; ohne Überschriften eine einzige Gruppe mit header ''"),
+]
+Steps = Annotated[list[str], Field(description="Zubereitungsschritte, einer pro Eintrag")]
+Servings = Annotated[int | None, Field(description="Anzahl Portionen; Mengen werden nicht umgerechnet", ge=1)]
+Minutes = Annotated[int | None, Field(ge=0)]
+Notes = Annotated[str | None, Field(description="Notizen unter dem Rezept")]
 
 
 def _env(name: str) -> str:
@@ -153,6 +179,135 @@ def build(auth=None) -> FastMCP:
             raise ToolError(str(e)) from e
         recipe = rc.parse(data, servings)
         return ToolResult(content=rc.to_markdown(recipe), structured_content=recipe.model_dump())
+
+    async def saved(recipe_id: str, headline: str) -> ToolResult:
+        """The recipe as Chefkoch stored it, so Claude sees what actually arrived."""
+        recipe = rc.parse(await client().recipe(recipe_id))
+        return ToolResult(
+            content=f"{headline}\n\n{rc.to_markdown(recipe)}", structured_content=recipe.model_dump()
+        )
+
+    @mcp.tool(annotations=WRITE)
+    async def create_recipe(
+        title: Annotated[str, Field(min_length=1)],
+        ingredient_groups: IngredientGroups,
+        steps: Steps,
+        servings: Servings = None,
+        preparation_time_min: Minutes = None,
+        cooking_time_min: Minutes = None,
+        resting_time_min: Minutes = None,
+        difficulty: edit.Difficulty | None = None,
+        notes: Notes = None,
+        collection_ids: Annotated[
+            list[str] | None, Field(description="Sammlungen (ids aus list_collections), in die das Rezept soll")
+        ] = None,
+    ) -> ToolResult:
+        """Ein neues eigenes (privates) Rezept im Kochbuch anlegen; nur für dieses Konto sichtbar."""
+        c = client()
+        changes = edit.fields(
+            title=title,
+            servings=servings,
+            preparation_time_min=preparation_time_min,
+            cooking_time_min=cooking_time_min,
+            resting_time_min=resting_time_min,
+            difficulty=difficulty,
+            notes=notes,
+        )
+        try:
+            groups = await edit.ingredient_groups(ingredient_groups, None, c.parse_ingredient)
+            recipe_id = await c.create_private_recipe(edit.create_body(changes, groups, steps))
+            if collection_ids:
+                await c.set_recipe_collections(recipe_id, collection_ids)
+            return await saved(recipe_id, f"Angelegt, id `{recipe_id}`.")
+        except ChefkochError as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool(annotations=OVERWRITE)
+    async def update_recipe(
+        recipe_id: Annotated[str, Field(description="id eines privaten Rezepts (beginnt mit user-)")],
+        title: Annotated[str | None, Field(min_length=1)] = None,
+        ingredient_groups: Annotated[
+            list[edit.IngredientGroupInput] | None,
+            Field(description="Ersetzt ALLE Zutaten; unveränderte genau wie bei get_recipe übernehmen"),
+        ] = None,
+        steps: Annotated[list[str] | None, Field(description="Ersetzt ALLE Zubereitungsschritte")] = None,
+        servings: Servings = None,
+        preparation_time_min: Minutes = None,
+        cooking_time_min: Minutes = None,
+        resting_time_min: Minutes = None,
+        difficulty: edit.Difficulty | None = None,
+        notes: Annotated[str | None, Field(description="Ersetzt die Notizen; '' löscht sie")] = None,
+    ) -> ToolResult:
+        """Ein eigenes (privates) Rezept ändern. Nur übergebene Felder ändern sich, der Rest bleibt."""
+        recipe_id = recipe_id.strip()
+        if not is_private(recipe_id):
+            raise ToolError("Nur eigene Rezepte (id beginnt mit user-) lassen sich ändern.")
+        c = client()
+        changes = edit.fields(
+            title=title,
+            servings=servings,
+            preparation_time_min=preparation_time_min,
+            cooking_time_min=cooking_time_min,
+            resting_time_min=resting_time_min,
+            difficulty=difficulty,
+            notes=notes,
+        )
+        try:
+            current = await c.recipe(recipe_id)
+            groups = None
+            if ingredient_groups is not None:
+                groups = await edit.ingredient_groups(ingredient_groups, current, c.parse_ingredient)
+            await c.update_private_recipe(recipe_id, edit.update_body(current, changes, groups, steps))
+            return await saved(recipe_id, "Gespeichert.")
+        except ChefkochError as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool(annotations=WRITE)
+    async def create_collection(
+        name: Annotated[str, Field(min_length=1)],
+        description: str = "",
+    ) -> ToolResult:
+        """Eine neue (private) Sammlung im Kochbuch anlegen."""
+        try:
+            raw = await client().create_collection(name.strip(), description.strip())
+        except ChefkochError as e:
+            raise ToolError(str(e)) from e
+        result = Collection(id=raw["id"], name=raw["name"], recipe_count=raw.get("recipeCount", 0))
+        return ToolResult(
+            content=f"Sammlung „{result.name}“ angelegt, id `{result.id}`.", structured_content=result.model_dump()
+        )
+
+    @mcp.tool(annotations=WRITE | {"idempotentHint": True})
+    async def set_recipe_collections(
+        recipe_id: Annotated[str, Field(description="id aus list_recipes, search_my_recipes oder create_recipe")],
+        add: Annotated[list[str] | None, Field(description="Sammlungs-ids, in die das Rezept zusätzlich soll")] = None,
+        remove: Annotated[list[str] | None, Field(description="Sammlungs-ids, aus denen es heraus soll")] = None,
+    ) -> ToolResult:
+        """Ein Rezept in Sammlungen aufnehmen oder daraus entfernen; andere Sammlungen bleiben, wie sie sind.
+        Aus dem Kochbuch gelöscht wird dabei nichts."""
+        recipe_id = recipe_id.strip()
+        c = client()
+        try:
+            current = await c.recipe_collection_ids(recipe_id)
+            drop = set(remove or [])
+            wanted = [i for i in dict.fromkeys(current + (add or [])) if i not in drop]
+            if wanted != current:
+                await c.set_recipe_collections(recipe_id, wanted)
+            names = {col["id"]: col for col in await c.collections()}
+        except ChefkochError as e:
+            raise ToolError(str(e)) from e
+        collections = [
+            Collection(id=i, name=names[i]["name"], recipe_count=names[i].get("recipeCount", 0))
+            if i in names
+            else Collection(id=i, name=i, recipe_count=0)
+            for i in wanted
+        ]
+        result = CollectionMembership(recipe_id=recipe_id, collections=collections)
+        text = ", ".join(f"„{col.name}“" for col in collections)
+        return ToolResult(
+            content=f"Das Rezept ist jetzt in: {text}." if text else "Das Rezept ist in keiner Sammlung mehr.",
+            structured_content=result.model_dump(),
+        )
 
     return mcp
 
