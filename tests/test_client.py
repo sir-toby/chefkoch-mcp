@@ -94,3 +94,19 @@ async def test_create_returns_new_id(router):
 
     assert await ChefkochClient("a@b.de", "pw").create_private_recipe({"title": "x"}) == "user-new"
     assert route.calls.last.request.content == b'{"title":"x"}'
+
+
+async def test_network_error_becomes_readable(router):
+    mock_login(router, ["tok"])
+    router.post(f"{API}/cookbooks/user-{UID}/private-recipes").mock(side_effect=httpx.ReadTimeout("slow"))
+
+    with pytest.raises(ChefkochError, match="unklar"):
+        await ChefkochClient("a@b.de", "pw").create_private_recipe({})
+
+
+async def test_get_with_has_errors_raises(router):
+    mock_login(router, ["tok"])
+    router.get(f"{API}/recipes/42").respond(200, json={"notification": {"hasErrors": True, "messages": []}})
+
+    with pytest.raises(ChefkochError):
+        await ChefkochClient("a@b.de", "pw").recipe("42")

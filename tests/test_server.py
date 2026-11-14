@@ -68,6 +68,7 @@ async def test_create_recipe_parses_lines_and_files_it(router):
         201, json={"notification": {"hasErrors": False, "messages": [{"recipe": {"id": "user-new"}}]}}
     )
     patch = router.patch(f"{CB}/saved-recipes").respond(200, json={"notification": {"hasErrors": False}})
+    router.get(f"{CB}/collections").respond(200, json={"count": 1, "results": [{"id": "c1", "name": "Kekse"}]})
     router.get(f"{CB}/private-recipes/user-new").respond(200, json={**LOADED, "id": "user-new", "title": "Ei"})
 
     result = await call(
@@ -84,3 +85,34 @@ async def test_create_recipe_parses_lines_and_files_it(router):
     ]
     assert json.loads(patch.calls.last.request.content)["collectionIds"] == ["c1"]
     assert "id `user-new`" in result.content[0].text
+
+
+async def test_create_recipe_failure_afterwards_names_the_new_id(router):
+    router.get(f"{CB}/collections").respond(200, json={"count": 1, "results": [{"id": "c1", "name": "Kekse"}]})
+    router.post(f"{API}/cookbooks/ingredients/parse").respond(
+        200, json={"results": [{"amount": 1.0, "unit": None, "food": {"id": "36", "nameSingular": "Ei"}, "properties": []}]}
+    )
+    router.post(f"{CB}/private-recipes").respond(
+        201, json={"notification": {"hasErrors": False, "messages": [{"recipe": {"id": "user-new"}}]}}
+    )
+    router.patch(f"{CB}/saved-recipes").respond(500)
+
+    with pytest.raises(ToolError, match="user-new.*Nicht noch einmal"):
+        await call("create_recipe", title="Ei", ingredient_groups=[{"ingredients": ["1 Ei"]}], steps=["Kochen."], collection_ids=["c1"])
+
+
+async def test_create_recipe_checks_collections_first(router):
+    router.get(f"{CB}/collections").respond(200, json={"count": 0, "results": []})
+    post = router.post(f"{CB}/private-recipes")
+
+    with pytest.raises(ToolError, match="Unbekannte Sammlung"):
+        await call("create_recipe", title="Ei", ingredient_groups=[{"ingredients": ["1 Ei"]}], steps=["Kochen."], collection_ids=["c9"])
+    assert not post.called
+
+
+async def test_blank_title_is_refused(router):
+    load = router.get(f"{CB}/private-recipes/user-1").respond(200, json=LOADED)
+
+    with pytest.raises(ToolError, match="(?i)validation|at least 1"):
+        await call("update_recipe", recipe_id="user-1", title="   ")
+    assert not load.called

@@ -28,6 +28,13 @@ ingredients are plain text lines that Chefkoch's own parser turns into its datab
 entries, and a change sends the whole recipe back. Public Chefkoch recipes cannot be
 edited, only private ones (id `user-…`). Deleting and photos are not offered.
 
+`update_recipe` refuses rather than guesses when a change could lose data, and
+sends nothing in that case: an empty ingredient or step list, a line the parser does
+not understand, ingredient lines of which none matches the stored recipe (typically
+copied from `get_recipe` with scaled servings), or a recipe that still has its
+ingredients or steps only as free text. New steps go into one section, so section
+headers of imported recipes are lost when the steps are changed.
+
 ## Architecture
 
 ```

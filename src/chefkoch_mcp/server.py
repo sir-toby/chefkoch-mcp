@@ -9,7 +9,7 @@ from typing import Annotated
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -67,6 +67,7 @@ Steps = Annotated[list[str], Field(description="Zubereitungsschritte, einer pro 
 Servings = Annotated[int | None, Field(description="Anzahl Portionen; Mengen werden nicht umgerechnet", ge=1)]
 Minutes = Annotated[int | None, Field(ge=0)]
 Notes = Annotated[str | None, Field(description="Notizen unter dem Rezept")]
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 def _env(name: str) -> str:
@@ -189,7 +190,7 @@ def build(auth=None) -> FastMCP:
 
     @mcp.tool(annotations=WRITE)
     async def create_recipe(
-        title: Annotated[str, Field(min_length=1)],
+        title: Text,
         ingredient_groups: IngredientGroups,
         steps: Steps,
         servings: Servings = None,
@@ -214,23 +215,43 @@ def build(auth=None) -> FastMCP:
             notes=notes,
         )
         try:
+            if collection_ids:
+                known = {col["id"] for col in await c.collections()}
+                if unknown := [i for i in collection_ids if i not in known]:
+                    raise ChefkochError(f"Unbekannte Sammlung(en): {', '.join(unknown)} - ids aus list_collections nehmen.")
             groups = await edit.ingredient_groups(ingredient_groups, None, c.parse_ingredient)
             recipe_id = await c.create_private_recipe(edit.create_body(changes, groups, steps))
+        except ChefkochError as e:
+            raise ToolError(str(e)) from e
+        # From here on the recipe exists: a retry would create a second one.
+        try:
             if collection_ids:
                 await c.set_recipe_collections(recipe_id, collection_ids)
             return await saved(recipe_id, f"Angelegt, id `{recipe_id}`.")
         except ChefkochError as e:
-            raise ToolError(str(e)) from e
+            raise ToolError(
+                f"Das Rezept wurde angelegt (id `{recipe_id}`), danach ging etwas schief: {e} "
+                "Nicht noch einmal anlegen; Sammlungen mit set_recipe_collections setzen."
+            ) from e
 
     @mcp.tool(annotations=OVERWRITE)
     async def update_recipe(
         recipe_id: Annotated[str, Field(description="id eines privaten Rezepts (beginnt mit user-)")],
-        title: Annotated[str | None, Field(min_length=1)] = None,
+        title: Text | None = None,
         ingredient_groups: Annotated[
             list[edit.IngredientGroupInput] | None,
-            Field(description="Ersetzt ALLE Zutaten; unveränderte genau wie bei get_recipe übernehmen"),
+            Field(description="Ersetzt ALLE Zutaten; unveränderte genau wie bei get_recipe (ohne servings) übernehmen"),
         ] = None,
-        steps: Annotated[list[str] | None, Field(description="Ersetzt ALLE Zubereitungsschritte")] = None,
+        replace_all_ingredients: Annotated[
+            bool,
+            Field(description="Nur wenn wirklich jede Zutat neu ist; sonst lehnt update_recipe eine Liste ab, "
+            "in der keine Zeile dem gespeicherten Rezept entspricht"),
+        ] = False,
+        steps: Annotated[
+            list[str] | None,
+            Field(description="Ersetzt ALLE Zubereitungsschritte; sie landen in einem Abschnitt, "
+            "bisherige Abschnitts-Überschriften entfallen"),
+        ] = None,
         servings: Servings = None,
         preparation_time_min: Minutes = None,
         cooking_time_min: Minutes = None,
@@ -256,7 +277,9 @@ def build(auth=None) -> FastMCP:
             current = await c.recipe(recipe_id)
             groups = None
             if ingredient_groups is not None:
-                groups = await edit.ingredient_groups(ingredient_groups, current, c.parse_ingredient)
+                groups = await edit.ingredient_groups(
+                    ingredient_groups, current, c.parse_ingredient, all_new=replace_all_ingredients
+                )
             await c.update_private_recipe(recipe_id, edit.update_body(current, changes, groups, steps))
             return await saved(recipe_id, "Gespeichert.")
         except ChefkochError as e:
@@ -264,7 +287,7 @@ def build(auth=None) -> FastMCP:
 
     @mcp.tool(annotations=WRITE)
     async def create_collection(
-        name: Annotated[str, Field(min_length=1)],
+        name: Text,
         description: str = "",
     ) -> ToolResult:
         """Eine neue (private) Sammlung im Kochbuch anlegen."""
@@ -283,17 +306,18 @@ def build(auth=None) -> FastMCP:
         add: Annotated[list[str] | None, Field(description="Sammlungs-ids, in die das Rezept zusätzlich soll")] = None,
         remove: Annotated[list[str] | None, Field(description="Sammlungs-ids, aus denen es heraus soll")] = None,
     ) -> ToolResult:
-        """Ein Rezept in Sammlungen aufnehmen oder daraus entfernen; andere Sammlungen bleiben, wie sie sind.
-        Aus dem Kochbuch gelöscht wird dabei nichts."""
+        """Ein Rezept in Sammlungen aufnehmen oder daraus entfernen; andere Sammlungen bleiben, wie sie sind."""
         recipe_id = recipe_id.strip()
         c = client()
         try:
+            names = {col["id"]: col for col in await c.collections()}
+            if unknown := [i for i in add or [] if i not in names]:
+                raise ChefkochError(f"Unbekannte Sammlung(en): {', '.join(unknown)} - ids aus list_collections nehmen.")
             current = await c.recipe_collection_ids(recipe_id)
             drop = set(remove or [])
             wanted = [i for i in dict.fromkeys(current + (add or [])) if i not in drop]
             if wanted != current:
                 await c.set_recipe_collections(recipe_id, wanted)
-            names = {col["id"]: col for col in await c.collections()}
         except ChefkochError as e:
             raise ToolError(str(e)) from e
         collections = [

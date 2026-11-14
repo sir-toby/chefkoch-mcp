@@ -88,7 +88,7 @@ errors carry the reason in `identifier`, e.g. `500 … "type_error"`.
 | Set collections of recipes | `PATCH /cookbooks/{cb}/saved-recipes` | `{"recipeIds": [...], "collectionIds": [...]}`, the **complete** set: a recipe leaves every collection not listed |
 | Remove from cookbook | `POST /cookbooks/{cb}/recipes/remove` | `{"recipeIds": [...]}`, with `sourceCategoryId` only from that collection; answers a `revert.id` for `POST /cookbooks/{cb}/revert/{revertId}` |
 
-Only `parse`, the two recipe calls and the collection calls are used here.
+Used here: parse, create and change private recipe, create collection, collections of a recipe, and set collections of recipes.
 
 ### The recipe body
 

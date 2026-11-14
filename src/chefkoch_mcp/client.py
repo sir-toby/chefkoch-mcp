@@ -96,13 +96,17 @@ class ChefkochClient:
         await self._ensure_login()
         for attempt in (1, 2):
             token = self._token
-            response = await self._http.request(
-                method,
-                f"{API}{path}",
-                json=json,
-                params={k: v for k, v in params.items() if v is not None},
-                headers={"X-Chefkoch-Api-Token": token or ""},
-            )
+            try:
+                response = await self._http.request(
+                    method,
+                    f"{API}{path}",
+                    json=json,
+                    params={k: v for k, v in params.items() if v is not None},
+                    headers={"X-Chefkoch-Api-Token": token or ""},
+                )
+            except httpx.HTTPError as e:
+                unclear = "" if method == "GET" else " Ob die Änderung angekommen ist, ist unklar."
+                raise ChefkochError(f"Keine Antwort von Chefkoch ({type(e).__name__}) für {method} {path}.{unclear}") from e
             if response.status_code == 401 and attempt == 1:
                 log.info("Chefkoch token rejected, logging in again")
                 await self._ensure_login(stale_token=token)
@@ -118,6 +122,8 @@ class ChefkochClient:
                     f"Chefkoch-API antwortet mit HTTP {response.status_code} für {method} {path}"
                     + (f" ({reason})" if reason else "")
                 )
+            if data is None:
+                raise ChefkochError(f"Chefkoch-Antwort für {method} {path} ist kein JSON - hat sich die API geändert?")
             return data
         raise ChefkochError("Chefkoch lehnt auch den frischen Login ab.")
 
@@ -158,7 +164,6 @@ class ChefkochClient:
             return await self.get(f"/cookbooks/{self.cookbook_id}/private-recipes/{recipe_id}")
         return await self.get(f"/recipes/{recipe_id}")
 
-
     # --- writing ----------------------------------------------------------
     # Request bodies as the website's editor sends them, see docs/api.md.
 
@@ -166,7 +171,7 @@ class ChefkochClient:
         """Chefkoch's own parser: "200 g Mehl, gesiebt" -> amount, unit and food with their ids.
         Usually one result; unknown foods come back with food id None."""
         data = await self._request("POST", "/cookbooks/ingredients/parse", json={"query": line})
-        return data["results"]
+        return _key(data, "results")
 
     async def create_private_recipe(self, body: dict) -> str:
         await self._ensure_login()
@@ -187,7 +192,7 @@ class ChefkochClient:
     async def recipe_collection_ids(self, recipe_id: str) -> list[str]:
         await self._ensure_login()
         data = await self.get(f"/cookbooks/{self.cookbook_id}/recipes/{recipe_id}/collections")
-        return data["collectionIds"]
+        return _key(data, "collectionIds")
 
     async def set_recipe_collections(self, recipe_id: str, collection_ids: list[str]) -> None:
         """`collection_ids` is the complete set: the recipe leaves every collection not in it."""
@@ -220,3 +225,10 @@ def _first_message(data: dict) -> dict:
         return data["notification"]["messages"][0]
     except (KeyError, IndexError, TypeError) as e:
         raise ChefkochError("Chefkoch-Antwort ohne Bestätigung - hat sich die API geändert?") from e
+
+
+def _key(data: Any, key: str) -> Any:
+    try:
+        return data[key]
+    except (KeyError, TypeError) as e:
+        raise ChefkochError(f"Chefkoch-Antwort ohne {key} - hat sich die API geändert?") from e

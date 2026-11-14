@@ -1,4 +1,7 @@
+import pytest
+
 from chefkoch_mcp import edit
+from chefkoch_mcp.client import ChefkochError
 
 LOADED = {
     "id": "user-1",
@@ -88,7 +91,8 @@ async def test_changed_amount_is_parsed_again():
     async def parse(line):
         return [{**LOADED["recipeIngredientGroups"][0]["ingredients"][0], "amount": 250.0}]
 
-    result = await edit.ingredient_groups([edit.IngredientGroupInput(ingredients=["250 g Mehl"])], LOADED, parse)
+    lines = ["250 g Mehl", "1 Omas Gewürz, fein"]
+    result = await edit.ingredient_groups([edit.IngredientGroupInput(ingredients=lines)], LOADED, parse)
     assert result[0]["ingredients"][0]["amount"] == 250.0
 
 
@@ -117,3 +121,72 @@ def test_create_body():
     assert body["version"] == "2"
     assert (body["title"], body["difficulty"], body["servings"]) == ("Suppe", 3, 4)
     assert "scrapeId" not in body and "subtype" not in body
+
+
+async def no_parse(line):
+    raise AssertionError(f"parsed {line!r}")
+
+
+async def test_duplicate_lines_each_keep_their_own_ingredient():
+    loaded = {"recipeIngredientGroups": [{"ingredients": [
+        {**LOADED["recipeIngredientGroups"][0]["ingredients"][0], "id": 1, "position": 0},
+        {**LOADED["recipeIngredientGroups"][0]["ingredients"][0], "id": 2, "position": 1, "properties": []},
+    ]}]}
+    groups = [edit.IngredientGroupInput(ingredients=["500 g Mehl", "500 g Mehl"])]
+    result = await edit.ingredient_groups(groups, loaded, no_parse)
+    assert len(result[0]["ingredients"]) == 2
+
+
+async def test_scaled_lines_are_refused_unless_all_new():
+    # what get_recipe with servings=4 shows for LOADED (2 servings)
+    groups = [edit.IngredientGroupInput(ingredients=["1000 g Mehl", "2 Omas Gewürz, fein"])]
+
+    async def parse(line):
+        return [PARSED_EGG]
+
+    with pytest.raises(ChefkochError, match="servings"):
+        await edit.ingredient_groups(groups, LOADED, parse)
+    assert await edit.ingredient_groups(groups, LOADED, parse, all_new=True)
+
+
+async def test_line_the_parser_does_not_understand_is_refused():
+    async def parse(line):
+        return []
+
+    with pytest.raises(ChefkochError, match="Quatsch"):
+        await edit.ingredient_groups([edit.IngredientGroupInput(ingredients=["500 g Mehl", "Quatsch"])], LOADED, parse)
+
+
+async def test_empty_ingredients_are_refused():
+    with pytest.raises(ChefkochError, match="Keine Zutaten"):
+        await edit.ingredient_groups([edit.IngredientGroupInput(header="Teig", ingredients=[" "])], LOADED, no_parse)
+
+
+async def test_changed_amount_of_own_food_keeps_that_food():
+    async def parse(line):
+        return [{"amount": 2.0, "unit": None, "food": {"id": None, "name": "Omas Gewürz"}, "properties": []}]
+
+    groups = [edit.IngredientGroupInput(ingredients=["500 g Mehl", "2 Omas Gewürz"])]
+    result = await edit.ingredient_groups(groups, LOADED, parse)
+    assert result[0]["ingredients"][1]["food"]["id"] == "user-abc"
+
+
+def test_ingredient_without_food_keeps_its_text():
+    loaded = {**LOADED, "recipeIngredientGroups": [{"ingredients": [{"amount": None, "food": None, "originalInput": "Salz nach Geschmack"}]}]}
+    body = edit.update_body(loaded, {})
+    assert body["recipeIngredientGroups"][0]["ingredients"][0]["food"] == {"id": None, "name": "Salz nach Geschmack"}
+
+
+def test_free_text_recipe_needs_new_ingredients_and_steps():
+    legacy = {**LOADED, "recipeIngredientGroups": [], "recipeInstructions": [],
+              "ingredientsTextLegacy": "500 g Mehl", "instructionsLegacy": "Backen."}
+    with pytest.raises(ChefkochError, match="Zutaten nur als Freitext"):
+        edit.update_body(legacy, {"servings": 4})
+    with pytest.raises(ChefkochError, match="Zubereitung nur als Freitext"):
+        edit.update_body(legacy, {}, groups=[{"header": "", "ingredients": []}])
+    assert edit.update_body(legacy, {}, groups=[{"header": "", "ingredients": []}], steps=["Backen."])
+
+
+def test_empty_steps_are_refused():
+    with pytest.raises(ChefkochError, match="Zubereitungsschritte"):
+        edit.update_body(LOADED, {}, steps=["", " "])
