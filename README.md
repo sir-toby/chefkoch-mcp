@@ -5,8 +5,13 @@ collections, saved Chefkoch recipes and private (own or imported) recipes, and i
 creates and edits private recipes and collections. Added to claude.ai as a custom
 connector, it works on web and mobile.
 
-Chefkoch has no official API. This uses the website's own, undocumented one
-([docs/api.md](docs/api.md)) and logs in with the account's email and password.
+> **Unofficial.** Not affiliated with or endorsed by Chefkoch. Chefkoch has no
+> official API; this uses the website's own, undocumented one
+> ([docs/api.md](docs/api.md)) and logs in with the account's email and password.
+> It can break whenever Chefkoch changes something, and automated access may not be
+> what Chefkoch's terms intend. The write tools change your real cookbook. Use at
+> your own risk.
+
 Existing Chefkoch MCP servers (e.g. [smlfg/chefkoch-mcp](https://github.com/smlfg/chefkoch-mcp))
 only read public recipes without a login, which is why this exists.
 
@@ -79,3 +84,13 @@ then `chefkoch-mcp` serves `http://localhost:8000/mcp`. Never expose that.
 CI pushes `sirtoby42/chefkoch-mcp:latest` and `:<sha>` to Docker Hub on every push to
 `main` (secrets `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`). Deployment itself is the
 `self-host` repo's job.
+
+## How this was made
+
+Most of the code and documentation was written with [Claude Code](https://claude.com/claude-code)
+and reviewed and run by me. Commits carry a `Co-Authored-By: Claude` line.
+
+## License
+
+[GNU Affero General Public License v3.0 or later](LICENSE). If you run a modified
+version as a service, its users are entitled to its source.

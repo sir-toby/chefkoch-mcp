@@ -2,6 +2,8 @@
 name = "chefkoch-mcp"
 version = "0.2.0"
 description = "MCP server for one Chefkoch.de cookbook: read recipes and collections, edit private recipes"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=4.2,<5",

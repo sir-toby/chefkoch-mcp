@@ -25,7 +25,7 @@ WRITE = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True}
 OVERWRITE = WRITE | {"destructiveHint": True}
 
 INSTRUCTIONS = """\
-Zugriff auf das private Chefkoch-Kochbuch des Haushalts: Sammlungen, gespeicherte
+Zugriff auf ein privates Chefkoch-Kochbuch: Sammlungen, gespeicherte
 Chefkoch-Rezepte und eigene bzw. importierte (private) Rezepte.
 Für ein konkretes Rezept erst suchen oder eine Sammlung auflisten, dann get_recipe
 mit der id aufrufen. get_recipe rechnet Zutaten auf Wunsch auf andere Portionen um.
