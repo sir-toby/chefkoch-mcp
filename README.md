@@ -1,9 +1,26 @@
-# chefkoch-mcp
+<h1 align="center">chefkoch-mcp</h1>
 
-Remote MCP server that gives Claude access to one Chefkoch.de cookbook: it reads
-collections, saved Chefkoch recipes and private (own or imported) recipes, and it
-creates and edits private recipes and collections. Added to claude.ai as a custom
-connector, it works on web and mobile.
+<p align="center"><strong>Your Chefkoch.de cookbook in Claude.</strong></p>
+
+<p align="center">A remote MCP server that gives Claude access to one Chefkoch.de cookbook: it reads collections, saved Chefkoch recipes and private (own or imported) recipes, and it creates and edits private recipes and collections. Added to claude.ai as a custom connector, it works on web and mobile.</p>
+
+<p align="center">
+  <a href="#tools"><strong>Tools</strong></a> ·
+  <a href="#configuration"><strong>Setup</strong></a> ·
+  <a href="docs/api.md"><strong>API notes</strong></a> ·
+  <a href="https://hub.docker.com/r/sirtoby42/chefkoch-mcp"><strong>Docker image</strong></a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
+  <a href="https://github.com/sir-toby/chefkoch-mcp/actions/workflows/test.yaml"><img alt="Tests" src="https://github.com/sir-toby/chefkoch-mcp/actions/workflows/test.yaml/badge.svg"></a>
+  <a href="https://github.com/sir-toby/chefkoch-mcp/actions/workflows/docker-publish.yaml"><img alt="Docker build" src="https://github.com/sir-toby/chefkoch-mcp/actions/workflows/docker-publish.yaml/badge.svg"></a>
+  <a href="https://github.com/sir-toby/chefkoch-mcp/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/sir-toby/chefkoch-mcp?sort=semver"></a>
+  <a href="https://hub.docker.com/r/sirtoby42/chefkoch-mcp"><img alt="Docker image" src="https://img.shields.io/badge/docker-sirtoby42%2Fchefkoch--mcp-2496ED?logo=docker&logoColor=white"></a>
+  <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
+  <a href="https://modelcontextprotocol.io"><img alt="MCP server" src="https://img.shields.io/badge/MCP-remote%20server-black?logo=modelcontextprotocol&logoColor=white"></a>
+  <a href="#how-this-was-made"><img alt="Built with Claude Code" src="https://img.shields.io/badge/built%20with-Claude%20Code-D97757?logo=claude&logoColor=white"></a>
+</p>
 
 > **Unofficial.** Not affiliated with or endorsed by Chefkoch. Chefkoch has no
 > official API; this uses the website's own, undocumented one
